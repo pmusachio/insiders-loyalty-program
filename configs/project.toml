@@ -1,0 +1,25 @@
+[project]
+name = "Insiders Loyalty Program"
+slug = "insiders_loyalty_program"
+family = "rfm_clustering"
+problem_type = "clustering"
+business_goal = "Identify high-value customers for the Insiders loyalty program using RFM purchasing behaviour."
+primary_metric = "Silhouette Score, Davies-Bouldin Index, Calinski-Harabasz Score, RFM cluster profile"
+
+[data]
+train_file = "data/raw/Ecommerce.csv"
+customer_column = "CustomerID"
+invoice_column = "InvoiceNo"
+date_column = "InvoiceDate"
+quantity_column = "Quantity"
+price_column = "UnitPrice"
+id_columns = ["customer_id"]
+drop_columns = []
+
+[modeling]
+cluster_range = [3, 4, 5, 6, 7, 8, 9]
+silhouette_sample_size = 10000
+random_state = 42
+model_file = "models/model.joblib"
+
+[evaluation]
