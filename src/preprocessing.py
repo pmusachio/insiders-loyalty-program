@@ -97,19 +97,10 @@ class Preprocessor:
             remainder="drop",
         )
 
-    def write_sample(self, rfm: pd.DataFrame) -> None:
-        """Persist a small reference sample for the app (slider ranges, examples)."""
-        n = min(config.SAMPLE_ROWS, len(rfm))
-        sample = rfm.sample(n=n, random_state=config.RANDOM_STATE)
-        config.SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
-        sample.to_parquet(config.SAMPLE_FILE, index=False)
-        logger.info("Wrote reference sample (%d rows) to %s", n, config.SAMPLE_FILE)
-
     def run(self, raw: pd.DataFrame) -> pd.DataFrame:
-        """Build RFM, persist the processed feature table and the app sample."""
+        """Build RFM and persist the processed feature table."""
         rfm = self.build_rfm(raw)
         config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
         rfm.to_parquet(config.FEATURES_FILE, index=False)
         logger.info("Wrote processed RFM features to %s", config.FEATURES_FILE)
-        self.write_sample(rfm)
         return rfm

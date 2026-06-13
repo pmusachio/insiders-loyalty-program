@@ -22,7 +22,9 @@ MODELS_DIR: Path = PROJECT_ROOT / "models"
 RAW_FILE: Path = RAW_DIR / "Ecommerce.csv"
 FEATURES_FILE: Path = PROCESSED_DIR / "rfm_features.parquet"
 PROCESSED_FILE: Path = PROCESSED_DIR / "customer_segments.parquet"
-SAMPLE_FILE: Path = SAMPLE_DIR / "rfm_sample.parquet"
+# App-facing copy of the scored base: small (<150 KB), versioned, deployed to the
+# Space so the app reads only from data/sample/ (never from raw/ or processed/).
+SAMPLE_FILE: Path = SAMPLE_DIR / "customer_segments.parquet"
 PIPELINE_PATH: Path = MODELS_DIR / "pipeline.joblib"
 MODEL_CARD_PATH: Path = MODELS_DIR / "model_card.json"
 
@@ -74,9 +76,6 @@ SILHOUETTE_SAMPLE_SIZE: int = 10_000
 # bootstrap resamples and measure label agreement (Adjusted Rand Index).
 STABILITY_N_RESAMPLES: int = 20
 STABILITY_SAMPLE_FRAC: float = 0.8
-
-# Rows persisted to data/sample/ for the app (reference ranges, no full dataset).
-SAMPLE_ROWS: int = 500
 
 # --------------------------------------------------------------------------- #
 # Segment naming

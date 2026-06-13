@@ -234,6 +234,9 @@ class ModelTrainer:
         config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
         scored.to_parquet(config.PROCESSED_FILE, index=False)
         logger.info("Wrote scored customer list -> %s", config.PROCESSED_FILE)
+        config.SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
+        scored.to_parquet(config.SAMPLE_FILE, index=False)
+        logger.info("Wrote app-facing scored base -> %s", config.SAMPLE_FILE)
 
         profile = evaluation["profile"]
         segments = {
