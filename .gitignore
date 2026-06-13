@@ -223,3 +223,6 @@ data/raw/*
 !data/raw/.gitkeep
 # Processed parquet and the app sample are small (<150 KB) and versioned so the
 # repo is runnable and HF Spaces-deployable without the full dataset.
+
+# macOS
+.DS_Store
