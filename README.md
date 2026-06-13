@@ -180,7 +180,7 @@ streamlit run app/streamlit_app.py
 ```
 
 **Live demo:** try the interactive segmenter on Hugging Face Spaces →
-`https://huggingface.co/spaces/<your-space>` <!-- replace with your published Space URL -->
+**[huggingface.co/spaces/pmusachio/insiders-loyalty-program](https://huggingface.co/spaces/pmusachio/insiders-loyalty-program)**
 
 ---
 
