@@ -7,6 +7,12 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-app-red.svg)](https://streamlit.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Insiders Loyalty Segmentation — interactive Streamlit demo" width="820">
+</p>
+
+> ▶️ **[Try the live, interactive demo on Hugging Face Spaces](https://huggingface.co/spaces/pmusachio/insiders-loyalty-program)**
+
 ---
 
 ## Business Problem
