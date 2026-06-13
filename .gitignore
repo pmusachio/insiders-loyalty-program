@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Project data & artifacts ---
+# Raw data is recreated on demand via the Kaggle API (see DataLoader).
+data/raw/*
+!data/raw/.gitkeep
+# Processed parquet and the app sample are small (<150 KB) and versioned so the
+# repo is runnable and HF Spaces-deployable without the full dataset.

@@ -1,0 +1,173 @@
+{
+  "created_at": "2026-06-13T15:26:48+00:00",
+  "dataset": {
+    "kaggle": "carrie1/ecommerce-data",
+    "raw_file": "Ecommerce.csv"
+  },
+  "data": {
+    "n_customers": 4338,
+    "features": [
+      "recency_days",
+      "frequency",
+      "monetary",
+      "avg_ticket",
+      "total_items"
+    ],
+    "data_hash": "2e3404c776b4d11c"
+  },
+  "preprocessing": "SimpleImputer(median) -> log1p -> StandardScaler",
+  "model": {
+    "algorithm": "KMeans",
+    "selected_k": 4,
+    "n_init": "auto",
+    "random_state": 42
+  },
+  "selection": {
+    "grid": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "trials": [
+      {
+        "k": 3,
+        "silhouette": 0.2563,
+        "davies_bouldin": 1.2946,
+        "calinski_harabasz": 2200.7
+      },
+      {
+        "k": 4,
+        "silhouette": 0.2689,
+        "davies_bouldin": 1.1731,
+        "calinski_harabasz": 1912.3
+      },
+      {
+        "k": 5,
+        "silhouette": 0.2314,
+        "davies_bouldin": 1.2858,
+        "calinski_harabasz": 1729.3
+      },
+      {
+        "k": 6,
+        "silhouette": 0.2155,
+        "davies_bouldin": 1.2659,
+        "calinski_harabasz": 1562.0
+      },
+      {
+        "k": 7,
+        "silhouette": 0.2005,
+        "davies_bouldin": 1.3161,
+        "calinski_harabasz": 1442.3
+      },
+      {
+        "k": 8,
+        "silhouette": 0.2072,
+        "davies_bouldin": 1.2536,
+        "calinski_harabasz": 1461.0
+      },
+      {
+        "k": 9,
+        "silhouette": 0.1998,
+        "davies_bouldin": 1.2707,
+        "calinski_harabasz": 1376.4
+      }
+    ]
+  },
+  "stability": {
+    "mean_adjusted_rand_index": 0.6776,
+    "std": 0.1956,
+    "n_resamples": 20,
+    "sample_fraction": 0.8
+  },
+  "baseline": {
+    "method": "RFM quintile scoring (R+F+M), top quintile = Insiders",
+    "top_customers": 930,
+    "top_pct_customers": 21.44,
+    "top_pct_revenue": 70.07,
+    "silhouette": 0.0911
+  },
+  "evaluation": {
+    "internal_metrics": {
+      "silhouette": 0.2689,
+      "davies_bouldin": 1.1731,
+      "calinski_harabasz": 1912.3
+    },
+    "overall_boundary_share_pct": 3.25
+  },
+  "segments": {
+    "0": {
+      "name": "Insiders",
+      "n_customers": 714.0,
+      "recency_days": 16.95,
+      "frequency": 13.77,
+      "monetary": 8045.95,
+      "avg_ticket": 37.86,
+      "total_items": 4618.27,
+      "revenue": 5744806.36,
+      "pct_customers": 16.46,
+      "pct_revenue": 64.47,
+      "boundary_share": 6.86
+    },
+    "1": {
+      "name": "Promising",
+      "n_customers": 316.0,
+      "recency_days": 124.74,
+      "frequency": 2.23,
+      "monetary": 2454.27,
+      "avg_ticket": 670.87,
+      "total_items": 1413.9,
+      "revenue": 775548.67,
+      "pct_customers": 7.28,
+      "pct_revenue": 8.7,
+      "boundary_share": 26.9
+    },
+    "2": {
+      "name": "Loyal Customers",
+      "n_customers": 1607.0,
+      "recency_days": 49.7,
+      "frequency": 3.57,
+      "monetary": 1179.97,
+      "avg_ticket": 16.85,
+      "total_items": 710.85,
+      "revenue": 1896215.09,
+      "pct_customers": 37.04,
+      "pct_revenue": 21.28,
+      "boundary_share": 0.06
+    },
+    "3": {
+      "name": "At Risk",
+      "n_customers": 1701.0,
+      "recency_days": 160.08,
+      "frequency": 1.33,
+      "monetary": 290.91,
+      "avg_ticket": 17.87,
+      "total_items": 165.34,
+      "revenue": 494837.78,
+      "pct_customers": 39.21,
+      "pct_revenue": 5.55,
+      "boundary_share": 0.35
+    }
+  },
+  "segment_names": {
+    "0": "Insiders",
+    "2": "Loyal Customers",
+    "1": "Promising",
+    "3": "At Risk"
+  },
+  "business": {
+    "insiders_customers": 714,
+    "insiders_pct_customers": 16.46,
+    "insiders_pct_revenue": 64.47,
+    "insiders_revenue_lift": 3.92,
+    "insiders_total_revenue": 5744806.36,
+    "insiders_avg_monetary": 8045.95
+  },
+  "environment": {
+    "python": "3.9.6",
+    "scikit_learn": "1.6.1"
+  }
+}

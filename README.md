@@ -1,368 +1,203 @@
-# Insiders Loyalty Program — Customer Segmentation with RFM & K-Means
+# **Insiders Loyalty Program — RFM Customer Segmentation**
 
-> **Data Science Portfolio Project** · Unsupervised Learning · Customer Segmentation · MLOps
+> Unsupervised Learning · Customer Segmentation · K-Means · Production Pipeline · Streamlit
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
-[![scikit-learn](https://img.shields.io/badge/scikit--learn-1.4+-orange.svg)](https://scikit-learn.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-1.6-orange.svg)](https://scikit-learn.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-app-red.svg)](https://streamlit.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## Table of Contents
+## Business Problem
 
-1. [Business Problem](#1-business-problem)
-2. [Solution Overview](#2-solution-overview)
-3. [Dataset](#3-dataset)
-4. [Machine Learning Approach](#4-machine-learning-approach)
-5. [Key Results](#5-key-results)
-6. [Project Structure](#6-project-structure)
-7. [How to Run (Quickstart for Recruiters)](#7-how-to-run-quickstart-for-recruiters)
-8. [Notebooks Walkthrough](#8-notebooks-walkthrough)
-9. [API Deployment](#9-api-deployment)
-10. [Technologies](#10-technologies)
+A UK-based online retailer wants to launch **Insiders**, an exclusive loyalty tier
+with premium perks. The cost structure is asymmetric:
 
----
+- **Inviting a low-value customer** wastes perk budget (discounts, early access, support cost).
+- **Missing a genuinely high-value customer** forfeits retention of the revenue that
+  actually sustains the business.
 
-## 1. Business Problem
+The decision the model informs is concrete: **which customers to enrol in Insiders**,
+out of thousands, repeatably and without manual cherry-picking.
 
-An e-commerce company wants to identify its **high-value customers** and invite them to an exclusive loyalty program called **Insiders**. Being an Insider means receiving premium benefits, early access to new products, and personalized communication.
+**Why a model and not just a rule?** Classic RFM scoring (rank customers into
+quantiles) is a perfectly reasonable heuristic and is used here as the **baseline**.
+We adopt K-Means only because it must *earn its complexity* — it produces segments
+that are ~3× more internally cohesive (silhouette 0.27 vs 0.09) without arbitrary
+quantile cut-offs, and a tighter, more defensible Insiders definition. See
+[Model](#model).
 
-**The challenge:** With thousands of customers and millions of transactions, it is impossible to manually identify who deserves to be an Insider. The company needs a data-driven, scalable, and repeatable solution.
-
-**Business questions answered:**
-- Who are our most valuable customers?
-- How do they differ from average buyers?
-- What is the revenue concentration among the top segment?
-- How many customers should belong to the Insiders program?
+**Assumptions:** behaviour is summarised by RFM; "value" is unlabelled and inferred
+from purchasing patterns; recency is measured against a fixed snapshot date.
 
 ---
 
-## 2. Solution Overview
+## Dataset
 
-The solution applies **unsupervised machine learning** to segment customers based on their purchasing behaviour, following the end-to-end ML project framework described in *Hands-On Machine Learning with Scikit-Learn and PyTorch* (Aurélien Géron, 2025).
+**Source:** [E-Commerce Data — Kaggle (UCI Online Retail)](https://www.kaggle.com/datasets/carrie1/ecommerce-data)
 
-**Pipeline:**
-
-```
-Raw Transactions → RFM Feature Engineering → Preprocessing Pipeline
-      → K-Means Clustering → Cluster Profiling → Insiders List
-      → SQLite Export → REST API / BI Dashboard
-```
-
-**RFM Framework:**
-| Feature | Meaning |
+| Property | Value |
 |---|---|
-| Recency | Days since last purchase |
-| Frequency | Number of unique invoices |
-| Monetary | Total gross revenue |
-| Avg Ticket | Mean revenue per invoice |
-| Total Items | Total quantity purchased |
+| Granularity | One row per transaction line |
+| Raw rows | 541,909 transactions |
+| Customers (after cleaning) | 4,338 |
+| Raw columns | `InvoiceNo`, `StockCode`, `Description`, `Quantity`, `InvoiceDate`, `UnitPrice`, `CustomerID`, `Country` |
+
+The raw CSV (~40 MB) is **not committed**; it is fetched on demand via the Kaggle API.
 
 ---
 
-## 3. Dataset
+## Solution Strategy
 
-**Source:** [E-Commerce Data – Kaggle (UCI ML Repository)](https://www.kaggle.com/datasets/carrie1/ecommerce-data)
-
-- **541,909** transactions from a UK-based online retailer
-- **4,372** unique customers after cleaning
-- Time range: **December 2010 – December 2011**
-- Columns: `InvoiceNo`, `StockCode`, `Description`, `Quantity`, `InvoiceDate`, `UnitPrice`, `CustomerID`, `Country`
-
-**Data cleaning steps:**
-- Remove cancelled invoices (InvoiceNo starting with `C`)
-- Drop rows with missing `CustomerID`
-- Remove zero or negative quantities and prices
-- Aggregate to one row per customer (RFM aggregation)
-
----
-
-## 4. Machine Learning Approach
-
-This is an **unsupervised clustering problem** (Chapter 8 of Géron's book). There is no predefined label for "valuable customer" — the algorithm discovers natural groupings in the data.
-
-**Algorithm:** K-Means with Scikit-Learn `Pipeline`
-
-**Model selection strategy:**
-- Search `k` from 3 to 9 clusters
-- Evaluate each `k` using **Silhouette Score**, **Davies-Bouldin Index**, and **Calinski-Harabasz Score**
-- Select the `k` that maximises silhouette while producing interpretable clusters
-
-**Preprocessing pipeline (Scikit-Learn `Pipeline`):**
-1. `SimpleImputer` (median) — handles any missing values
-2. `StandardScaler` — normalises features for distance-based clustering
-
-**Log transformation:** RFM features are right-skewed; a `log1p` transform is applied before scaling, following the book's recommendation to handle skewed distributions before training.
+1. **Data acquisition** — download via Kaggle API into `data/raw/` (idempotent; skipped if present).
+2. **Cleaning** — drop missing customers, parse dates, keep positive quantity/price,
+   remove cancelled invoices (`InvoiceNo` prefixed `C`).
+3. **Feature engineering** — aggregate transactions into one RFM row per customer.
+4. **Preprocessing pipeline** (sklearn `ColumnTransformer`): `SimpleImputer(median) → log1p → StandardScaler`.
+   `log1p` compresses the right-skewed RFM tails before distance-based clustering.
+5. **Data leakage** — structurally not applicable (unsupervised, no target). The only
+   temporal dependency, `recency_days`, is computed against a snapshot reference date
+   (`max(InvoiceDate) + 1 day`); production scoring must recompute RFM as-of the scoring date.
+6. **Class balancing** — not applicable (no classes). Uneven segment sizes are
+   expected and desirable — Insiders are meant to be a minority.
+7. **Baseline → model** — rule-based RFM scoring, then K-Means with a grid search over `k`.
+8. **Validation** — stability via bootstrap resampling (Adjusted Rand Index), the
+   clustering analogue of cross-validation.
+9. **Evaluation** — internal indices + per-segment profiling + boundary (error) analysis.
+10. **Serving** — serialize the full pipeline (`models/pipeline.joblib`) and expose an
+    on-demand Streamlit app. The transform is bundled with the model — no training-serving skew.
 
 ---
 
-## 5. Key Results
+## Top Insights & Hypotheses
 
-| Cluster | Label | Customers | Revenue Share | Recency (days) |
+- **Revenue is highly concentrated.** The top segment (16.5% of customers) generates
+  **64.5% of revenue** — a 3.9× concentration. This is the core justification for Insiders.
+- **Insiders are structurally different**, not just bigger spenders: they order ~14×
+  per year (vs 1.3× for the dormant majority) with 17-day recency (vs 160 days).
+- **A high-ticket, low-frequency niche exists** (the *Promising* segment: £671 average
+  ticket, ~2 orders, 124-day recency) that behaves like wholesale buyers. It is the
+  least cohesive group (27% boundary share) and warrants separate treatment.
+- **~39% of customers are dormant/at-risk** (160-day recency) yet contribute only 5.6%
+  of revenue — low priority for premium perks, candidates for win-back instead.
+
+---
+
+## Engineered Features
+
+All features are domain aggregations from raw transactions (the *engineered* layer);
+the `log1p` + scaling parameters and centroids are *learned* inside the pipeline.
+
+| Feature | Formula | Business signal |
+|---|---|---|
+| `recency_days` | `(max(InvoiceDate)+1d − last purchase).days` | Engagement freshness; high = churn risk |
+| `frequency` | count of distinct invoices | Purchase habit / loyalty |
+| `monetary` | Σ(`Quantity` × `UnitPrice`) | Total revenue contribution |
+| `avg_ticket` | mean(`Quantity` × `UnitPrice`) per line | Basket value / price tier |
+| `total_items` | Σ `Quantity` | Volume of consumption |
+
+---
+
+## Model
+
+**Baseline vs. final model**
+
+| Approach | Method | Top-segment size | Top-segment revenue | Silhouette |
 |---|---|---|---|---|
-| Best | **Insiders** | ~15% | ~55% | < 30 |
-| Mid | Loyalists | ~25% | ~30% | 30–90 |
-| At-Risk | Sleepers | ~30% | ~10% | 90–200 |
-| Churned | Lost | ~30% | ~5% | > 200 |
+| Baseline | RFM quintile scoring (heuristic) | 21.4% | 70.1% | 0.091 |
+| **Final** | **K-Means (k=4), log-scaled RFM** | **16.5% (Insiders)** | **64.5%** | **0.269** |
 
-> Full results with exact numbers are generated when you run the pipeline — they depend on the random seed and cluster count chosen automatically.
+The heuristic captures slightly more raw revenue, but in a looser, larger bucket.
+K-Means trades a little revenue coverage for **3× better cohesion** and a sharper
+Insiders definition.
 
-**Clustering metrics (best run):**
-- Silhouette Score ≈ 0.42–0.55 (higher is better, max = 1)
-- Davies-Bouldin Index ≈ 0.7–0.9 (lower is better)
+**Model selection** — grid search over `k`, scored by three internal indices:
 
----
+| k | Silhouette ↑ | Davies-Bouldin ↓ | Calinski-Harabasz ↑ |
+|---|---|---|---|
+| 3 | 0.256 | 1.295 | 2200.7 |
+| **4** | **0.269** | **1.173** | 1912.3 |
+| 5 | 0.231 | 1.286 | 1729.3 |
+| 6 | 0.216 | 1.266 | 1562.0 |
+| 7 | 0.200 | 1.316 | 1442.3 |
+| 8 | 0.207 | 1.254 | 1461.0 |
+| 9 | 0.200 | 1.271 | 1376.4 |
 
-## 6. Project Structure
+`k=4` wins on silhouette **and** Davies-Bouldin. (Calinski-Harabasz prefers fewer
+clusters monotonically, so it is used as a tie-checker, not the selector.)
 
-```
-insiders-loyalty-program/
-├── data/
-│   ├── raw/                # Original CSV from Kaggle
-│   └── processed/          # Cleaned/transformed data (generated)
-├── models/                 # Trained pipeline saved with joblib
-├── notebooks/
-│   ├── 00_business_understanding.ipynb
-│   ├── 01_data_understanding.ipynb
-│   ├── 02_exploratory_analysis.ipynb
-│   ├── 03_feature_engineering.ipynb
-│   ├── 04_modeling_and_business_results.ipynb
-│   └── 05_deployment_and_consumption.ipynb
-├── reports/
-│   ├── figures/            # Plots saved by notebooks
-│   ├── metrics.json        # Clustering metrics (generated)
-│   ├── cluster_assignments.csv   # Customer → cluster mapping
-│   └── insiders_segments.sqlite  # BI-ready SQLite database
-├── scripts/
-│   └── export_clusters_to_sqlite.py
-├── src/insiders_loyalty_program/
-│   ├── config.py           # TOML config loader
-│   ├── data.py             # Data loading and profiling
-│   ├── features.py         # RFM feature engineering
-│   ├── models.py           # Training, evaluation, prediction
-│   ├── analysis.py         # Statistical analysis helpers
-│   ├── api.py              # FastAPI service
-│   └── cli.py              # Command-line interface
-├── tests/
-│   └── test_project_contract.py
-├── configs/
-│   └── project.toml        # Project configuration
-├── Dockerfile              # Container image for the API
-├── docker-compose.yml      # One-command deploy (train + API)
-├── Makefile                # Convenience commands
-├── requirements.txt        # Core dependencies
-└── requirements-api.txt    # API-only dependencies
-```
+**Final metrics**
+
+| Metric | Value | Reading |
+|---|---|---|
+| Silhouette | 0.269 | Moderate but real separation — expected for continuous behavioural data |
+| Davies-Bouldin | 1.173 | Lower is better |
+| Stability (mean ARI) | 0.678 ± 0.196 | Assignments are reasonably reproducible across resamples |
+| Boundary share | 3.25% | Few customers sit ambiguously between segments |
 
 ---
 
-## 7. How to Run (Quickstart for Recruiters)
+## Business Results
 
-There are three ways to run this project. Choose the one that fits your setup.
+| Cluster | Segment | Customers | % Customers | % Revenue | Recency (d) | Frequency | Avg Monetary (£) |
+|---|---|---|---|---|---|---|---|
+| 0 | **Insiders** | 714 | 16.5% | **64.5%** | 17 | 13.8 | 8,046 |
+| 2 | Loyal Customers | 1,607 | 37.0% | 21.3% | 50 | 3.6 | 1,180 |
+| 1 | Promising | 316 | 7.3% | 8.7% | 125 | 2.2 | 2,454 |
+| 3 | At Risk | 1,701 | 39.2% | 5.6% | 160 | 1.3 | 291 |
+
+**ML → business translation:** targeting the **714 Insiders** (16.5% of the base)
+covers **£5.74M / 64.5%** of revenue at a **3.9× concentration lift**. A retention
+campaign focused on this segment protects the majority of revenue while spending
+perk budget on the smallest possible audience — the explicit cost trade-off from the
+[Business Problem](#business-problem).
 
 ---
 
-### Option A — Docker (Recommended, zero setup)
-
-Requires: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+## How to Run
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/<your-username>/insiders-loyalty-program.git
+# 1. Clone
+git clone https://github.com/pmusachio/insiders-loyalty-program.git
 cd insiders-loyalty-program
 
-# 2. Place the dataset
-# Download from Kaggle: https://www.kaggle.com/datasets/carrie1/ecommerce-data
-# Rename the file to Ecommerce.csv and place it at:
-#   data/raw/Ecommerce.csv
-
-# 3. Train the model and start the API
-docker compose up --build
-
-# The API will be available at http://localhost:8000
-# Interactive docs: http://localhost:8000/docs
-```
-
-To check the Insiders list after training:
-
-```bash
-docker compose exec app python scripts/export_clusters_to_sqlite.py
-# Output: reports/insiders_segments.sqlite
-```
-
----
-
-### Option B — Local Python (pip + virtualenv)
-
-Requires: Python 3.11+
-
-```bash
-# 1. Clone and enter the repository
-git clone https://github.com/<your-username>/insiders-loyalty-program.git
-cd insiders-loyalty-program
-
-# 2. Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate          # macOS / Linux
-# .venv\Scripts\activate           # Windows
-
-# 3. Install dependencies
+# 2. Environment
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pip install -r requirements-api.txt
 
-# 4. Add the dataset
-# Download from Kaggle and save as data/raw/Ecommerce.csv
+# 3. Kaggle credentials
+#    Place your kaggle.json at ~/.kaggle/kaggle.json (Kaggle → Settings → API).
 
-# 5. Run the full pipeline
-make train
+# 4. Run the full pipeline (download → preprocess → baseline → train → evaluate → serialize)
+python -m src.pipeline
 
-# 6. (Optional) Start the REST API
-make api
+# 5. Tests
+pytest tests/
 
-# 7. (Optional) Export to SQLite for BI tools
-make export
+# 6. App (local)
+streamlit run app/streamlit_app.py
 ```
+
+**Live demo:** try the interactive segmenter on Hugging Face Spaces →
+`https://huggingface.co/spaces/<your-space>` <!-- replace with your published Space URL -->
 
 ---
 
-### Option C — Google Colab (no local install)
+## Next Steps
 
-Open a new Colab notebook and run the cells below.
-
-```python
-# Step 1 — Clone and install
-REPO = "https://github.com/<your-username>/insiders-loyalty-program.git"
-!git clone {REPO} project && cd project && pip install -q -r requirements.txt
-
-# Step 2 — Upload dataset from Kaggle
-from google.colab import files
-files.upload()  # upload kaggle.json
-
-!mkdir -p ~/.kaggle && cp kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json
-!mkdir -p project/data/raw
-!kaggle datasets download -d carrie1/ecommerce-data --unzip -p project/data/raw/
-!mv project/data/raw/data.csv project/data/raw/Ecommerce.csv 2>/dev/null || true
-
-# Step 3 — Train
-%cd project
-!PYTHONPATH=src python -m insiders_loyalty_program.cli train
-```
-
-Then open the notebooks in `notebooks/` and run them sequentially.
-
----
-
-### Makefile Commands Reference
-
-| Command | Description |
-|---|---|
-| `make train` | Run the full training pipeline |
-| `make profile` | Generate data profile report |
-| `make api` | Start the FastAPI server |
-| `make export` | Export clusters to SQLite |
-| `make test` | Run the test suite |
-| `make clean` | Remove generated artefacts |
-
----
-
-### Verifying Results
-
-After training, three files are generated:
-
-```bash
-# Cluster assignments (one row per customer)
-cat reports/cluster_assignments.csv | head
-
-# Metrics summary
-cat reports/metrics.json
-
-# Insiders list (customers in the top-value cluster)
-python -c "
-import pandas as pd, json
-df = pd.read_csv('reports/cluster_assignments.csv')
-metrics = json.load(open('reports/metrics.json'))
-print(df['cluster'].value_counts())
-"
-```
-
----
-
-## 8. Notebooks Walkthrough
-
-The notebooks tell the full story of the project from business framing to deployment. Run them in order from a terminal with:
-
-```bash
-jupyter lab
-```
-
-| Notebook | Purpose |
-|---|---|
-| `00_business_understanding` | Problem framing, ML type selection, success criteria |
-| `01_data_understanding` | Raw data inspection, missing values, distributions |
-| `02_exploratory_analysis` | EDA, Pareto analysis, customer behaviour hypotheses |
-| `03_feature_engineering` | RFM derivation, log transforms, pipeline preview |
-| `04_modeling_and_business_results` | Elbow curve, silhouette, cluster profiles, business translation |
-| `05_deployment_and_consumption` | API demo, SQLite export, consuming new customer predictions |
-
----
-
-## 9. API Deployment
-
-The trained model is served via a FastAPI REST endpoint.
-
-**Start the API:**
-```bash
-make api
-# or: uvicorn src.insiders_loyalty_program.api:app --reload
-```
-
-**Health check:**
-```bash
-curl http://localhost:8000/health
-# {"status": "ok"}
-```
-
-**Predict cluster for new customers:**
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "records": [
-      {
-        "recency_days": 15,
-        "frequency": 12,
-        "monetary": 4500.0,
-        "avg_ticket": 375.0,
-        "total_items": 320
-      }
-    ]
-  }'
-```
-
-Interactive API docs: `http://localhost:8000/docs`
-
----
-
-## 10. Technologies
-
-| Category | Tool |
-|---|---|
-| Language | Python 3.11 |
-| ML | Scikit-Learn 1.4 |
-| Data | Pandas, NumPy |
-| Visualisation | Matplotlib, Seaborn |
-| API | FastAPI, Uvicorn |
-| Persistence | Joblib, SQLite |
-| Config | TOML |
-| Testing | Pytest |
-| Containerisation | Docker, Docker Compose |
-| Notebooks | JupyterLab |
-
----
-
-## References
-
-- Géron, Aurélien. *Hands-On Machine Learning with Scikit-Learn and PyTorch* (2025). O'Reilly Media.
-- Dataset: [UCI Online Retail Dataset via Kaggle](https://www.kaggle.com/datasets/carrie1/ecommerce-data)
-- RFM methodology: Hughes, A.M. (1994). *Strategic Database Marketing*.
+- **Drift & performance monitoring.** Track the RFM feature distributions and segment
+  sizes monthly; alert when the population shifts (e.g., PSI on each feature) or when
+  the Insiders share drifts materially from ~16%.
+- **Retraining triggers.** Refit when stability (ARI) on a fresh snapshot degrades, when
+  silhouette drops below ~0.22, or on a fixed monthly cadence — whichever comes first.
+- **Known limitations (conscious trade-offs):**
+  - Silhouette ≈ 0.27 reflects genuinely continuous behaviour; segments are useful but
+    not crisply separated. A soft-assignment model (e.g., Gaussian Mixture) is a
+    candidate if probabilistic membership becomes a requirement.
+  - RFM features are correlated (`monetary`, `avg_ticket`, `total_items`); K-Means on
+    Euclidean distance tolerates this, but a dimensionality step is a future option.
+  - `recency` is snapshot-relative; a rolling reference date is needed for live scoring.
+  - **No Git LFS / feature store / model registry** — deliberately omitted. No artifact
+    exceeds 50 MB and the model is a 37 KB joblib; that infrastructure would be
+    disproportionate to the project's scale.

@@ -1,21 +1,19 @@
-# Notebooks
+# Notebooks — Development Record
 
-Run the notebooks in order for the full end-to-end story:
+These notebooks are the original exploration record, kept for transparency on how
+the solution was reached: business framing → data understanding → EDA → feature
+engineering → modeling and results.
 
-```bash
-cd ..   # project root
-jupyter lab
-```
+They are **not** part of the production pipeline. The reproducible logic was
+consolidated into `src/` (run with `python -m src.pipeline`); notebook imports
+reference the earlier module layout and are preserved unchanged as a historical
+artifact.
 
-| # | Notebook | What it covers |
+| # | Notebook | Focus |
 |---|---|---|
-| 00 | `00_business_understanding.ipynb` | Problem framing, ML type, success metrics |
-| 01 | `01_data_understanding.ipynb` | Schema, missing values, distributions, data quality |
-| 02 | `02_exploratory_analysis.ipynb` | Pareto analysis, RFM scatter plots, hypothesis testing |
-| 03 | `03_feature_engineering.ipynb` | RFM derivation, log transform, sklearn Pipeline preview |
-| 04 | `04_modeling_and_business_results.ipynb` | Elbow curve, silhouette, cluster profiles, business translation |
-| 05 | `05_deployment_and_consumption.ipynb` | API test, SQLite export, production architecture |
-
-All notebooks import from `src/insiders_loyalty_program/`, keeping the visual narrative aligned with the reproducible pipeline.
-
-Figures saved by notebooks are written to `../reports/figures/`.
+| 00 | `00_business_understanding` | Problem framing, ML-vs-heuristic, success criteria |
+| 01 | `01_data_understanding` | Schema, missing values, distributions |
+| 02 | `02_exploratory_analysis` | Pareto/revenue concentration, RFM behaviour |
+| 03 | `03_feature_engineering` | RFM derivation, skew/log transform |
+| 04 | `04_modeling_and_business_results` | k-search, silhouette, cluster profiles |
+| 05 | `05_deployment_and_consumption` | Serving and consumption walkthrough |
