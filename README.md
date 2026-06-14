@@ -2,40 +2,21 @@
 
 > Unsupervised Learning · Customer Segmentation · K-Means · Production Pipeline · Streamlit
 
-[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
-[![scikit-learn](https://img.shields.io/badge/scikit--learn-1.6-orange.svg)](https://scikit-learn.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-app-red.svg)](https://streamlit.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-<p align="center">
-  <img src="assets/demo.gif" alt="Insiders Loyalty Segmentation — interactive Streamlit demo" width="820">
-</p>
-
-> ▶️ **[Try the live, interactive demo on Hugging Face Spaces](https://huggingface.co/spaces/pmusachio/insiders-loyalty-program)**
-
 ---
 
 ## Business Problem
 
-A UK-based online retailer wants to launch **Insiders**, an exclusive loyalty tier
-with premium perks. The cost structure is asymmetric:
+A UK-based online retailer wants to launch **Insiders**, an exclusive loyalty tier with premium perks. The cost structure is asymmetric:
 
 - **Inviting a low-value customer** wastes perk budget (discounts, early access, support cost).
-- **Missing a genuinely high-value customer** forfeits retention of the revenue that
-  actually sustains the business.
+- **Missing a genuinely high-value customer** forfeits retention of the revenue that actually sustains the business.
 
-The decision the model informs is concrete: **which customers to enrol in Insiders**,
-out of thousands, repeatably and without manual cherry-picking.
+The decision the model informs is concrete: **which customers to enrol in Insiders**, out of thousands, repeatably and without manual cherry-picking.
 
-**Why a model and not just a rule?** Classic RFM scoring (rank customers into
-quantiles) is a perfectly reasonable heuristic and is used here as the **baseline**.
-We adopt K-Means only because it must *earn its complexity* — it produces segments
-that are ~3× more internally cohesive (silhouette 0.27 vs 0.09) without arbitrary
-quantile cut-offs, and a tighter, more defensible Insiders definition. See
-[Model](#model).
+**Why a model and not just a rule?** Classic RFM scoring (rank customers into quantiles) is a perfectly reasonable heuristic and is used here as the **baseline**.
+We adopt K-Means only because it must *earn its complexity* — it produces segments that are ~3× more internally cohesive (silhouette 0.27 vs 0.09) without arbitrary quantile cut-offs, and a tighter, more defensible Insiders definition.
 
-**Assumptions:** behaviour is summarised by RFM; "value" is unlabelled and inferred
-from purchasing patterns; recency is measured against a fixed snapshot date.
+**Assumptions:** behaviour is summarised by RFM; "value" is unlabelled and inferred from purchasing patterns; recency is measured against a fixed snapshot date.
 
 ---
 
@@ -56,23 +37,15 @@ The raw CSV (~40 MB) is **not committed**; it is fetched on demand via the Kaggl
 
 ## Solution Strategy
 
-1. **Data acquisition** — download via Kaggle API into `data/raw/` (idempotent; skipped if present).
-2. **Cleaning** — drop missing customers, parse dates, keep positive quantity/price,
-   remove cancelled invoices (`InvoiceNo` prefixed `C`).
-3. **Feature engineering** — aggregate transactions into one RFM row per customer.
-4. **Preprocessing pipeline** (sklearn `ColumnTransformer`): `SimpleImputer(median) → log1p → StandardScaler`.
-   `log1p` compresses the right-skewed RFM tails before distance-based clustering.
-5. **Data leakage** — structurally not applicable (unsupervised, no target). The only
-   temporal dependency, `recency_days`, is computed against a snapshot reference date
-   (`max(InvoiceDate) + 1 day`); production scoring must recompute RFM as-of the scoring date.
-6. **Class balancing** — not applicable (no classes). Uneven segment sizes are
-   expected and desirable — Insiders are meant to be a minority.
-7. **Baseline → model** — rule-based RFM scoring, then K-Means with a grid search over `k`.
-8. **Validation** — stability via bootstrap resampling (Adjusted Rand Index), the
-   clustering analogue of cross-validation.
-9. **Evaluation** — internal indices + per-segment profiling + boundary (error) analysis.
-10. **Serving** — serialize the full pipeline (`models/pipeline.joblib`) and expose an
-    on-demand Streamlit app. The transform is bundled with the model — no training-serving skew.
+- **Data acquisition** — download via Kaggle API into `data/raw/` (idempotent; skipped if present).
+- **Cleaning** — drop missing customers, parse dates, keep positive quantity/price, remove cancelled invoices (`InvoiceNo` prefixed `C`).
+- **Feature engineering** — aggregate transactions into one RFM row per customer.
+- **Preprocessing pipeline** (sklearn `ColumnTransformer`): `SimpleImputer(median) → log1p → StandardScaler`. `log1p` compresses the right-skewed RFM tails before distance-based clustering.
+- **Data leakage** — structurally not applicable (unsupervised, no target). The only temporal dependency, `recency_days`, is computed against a snapshot reference date (`max(InvoiceDate) + 1 day`); production scoring must recompute RFM as-of the scoring date.
+- **Baseline → model** — rule-based RFM scoring, then K-Means with a grid search over `k`.
+- **Validation** — stability via bootstrap resampling (Adjusted Rand Index), themclustering analogue of cross-validation.
+- **Evaluation** — internal indices + per-segment profiling + boundary (error) analysis.
+- **Serving** — serialize the full pipeline (`models/pipeline.joblib`) and expose an on-demand Streamlit app. The transform is bundled with the model — no training-serving skew.
 
 ---
 
@@ -80,13 +53,9 @@ The raw CSV (~40 MB) is **not committed**; it is fetched on demand via the Kaggl
 
 - **Revenue is highly concentrated.** The top segment (16.5% of customers) generates
   **64.5% of revenue** — a 3.9× concentration. This is the core justification for Insiders.
-- **Insiders are structurally different**, not just bigger spenders: they order ~14×
-  per year (vs 1.3× for the dormant majority) with 17-day recency (vs 160 days).
-- **A high-ticket, low-frequency niche exists** (the *Promising* segment: £671 average
-  ticket, ~2 orders, 124-day recency) that behaves like wholesale buyers. It is the
-  least cohesive group (27% boundary share) and warrants separate treatment.
-- **~39% of customers are dormant/at-risk** (160-day recency) yet contribute only 5.6%
-  of revenue — low priority for premium perks, candidates for win-back instead.
+- **Insiders are structurally different**, not just bigger spenders: they order ~14× per year (vs 1.3× for the dormant majority) with 17-day recency (vs 160 days).
+- **A high-ticket, low-frequency niche exists** (the *Promising* segment: £671 average ticket, ~2 orders, 124-day recency) that behaves like wholesale buyers. It is the least cohesive group (27% boundary share) and warrants separate treatment.
+- **~39% of customers are dormant/at-risk** (160-day recency) yet contribute only 5.6% of revenue — low priority for premium perks, candidates for win-back instead.
 
 ---
 
@@ -153,11 +122,7 @@ clusters monotonically, so it is used as a tie-checker, not the selector.)
 | 1 | Promising | 316 | 7.3% | 8.7% | 125 | 2.2 | 2,454 |
 | 3 | At Risk | 1,701 | 39.2% | 5.6% | 160 | 1.3 | 291 |
 
-**ML → business translation:** targeting the **714 Insiders** (16.5% of the base)
-covers **£5.74M / 64.5%** of revenue at a **3.9× concentration lift**. A retention
-campaign focused on this segment protects the majority of revenue while spending
-perk budget on the smallest possible audience — the explicit cost trade-off from the
-[Business Problem](#business-problem).
+**ML → business translation:** targeting the **714 Insiders** (16.5% of the base) covers **£5.74M / 64.5%** of revenue at a **3.9× concentration lift**. A retention campaign focused on this segment protects the majority of revenue while spending perk budget on the smallest possible audience — the explicit cost trade-off from the Business Problem.
 
 ---
 
@@ -185,8 +150,7 @@ pytest tests/
 streamlit run app/streamlit_app.py
 ```
 
-**Live demo:** try the interactive segmenter on Hugging Face Spaces →
-**[huggingface.co/spaces/pmusachio/insiders-loyalty-program](https://huggingface.co/spaces/pmusachio/insiders-loyalty-program)**
+**Live demo:** [huggingface.co/spaces/pmusachio/insiders-loyalty-program](https://huggingface.co/spaces/pmusachio/insiders-loyalty-program)
 
 ---
 
