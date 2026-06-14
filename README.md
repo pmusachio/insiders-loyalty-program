@@ -1,173 +1,108 @@
-# **Insiders Loyalty Program — RFM Customer Segmentation**
+# Insiders Loyalty Program — RFM Customer Segmentation
 
-> Unsupervised Learning · Customer Segmentation · K-Means · Production Pipeline · Streamlit
-
----
+> Unsupervised learning · RFM features · KMeans clustering · Value-based segmentation
 
 ## Business Problem
 
-A UK-based online retailer wants to launch **Insiders**, an exclusive loyalty tier with premium perks. The cost structure is asymmetric:
+An e-commerce company wants a loyalty program ("Insiders") that concentrates its budget on the
+customers who actually drive revenue. The question is which customers belong in that high-value
+tier, and how the rest of the base should be grouped for differentiated treatment.
 
-- **Inviting a low-value customer** wastes perk budget (discounts, early access, support cost).
-- **Missing a genuinely high-value customer** forfeits retention of the revenue that actually sustains the business.
-
-The decision the model informs is concrete: **which customers to enrol in Insiders**, out of thousands, repeatably and without manual cherry-picking.
-
-**Why a model and not just a rule?** Classic RFM scoring (rank customers into quantiles) is a perfectly reasonable heuristic and is used here as the **baseline**.
-We adopt K-Means only because it must *earn its complexity* — it produces segments that are ~3× more internally cohesive (silhouette 0.27 vs 0.09) without arbitrary quantile cut-offs, and a tighter, more defensible Insiders definition.
-
-**Assumptions:** behaviour is summarised by RFM; "value" is unlabelled and inferred from purchasing patterns; recency is measured against a fixed snapshot date.
-
----
+There is no label to predict, so this is an **unsupervised segmentation** problem. The cost of a
+poor segmentation is misallocated loyalty spend — perks given to low-value customers, while the
+true top tier is under-served. The segmentation is judged on cluster quality and, decisively, on
+whether one segment captures a disproportionate share of revenue that justifies a dedicated program.
 
 ## Dataset
 
-**Source:** [E-Commerce Data — Kaggle (UCI Online Retail)](https://www.kaggle.com/datasets/carrie1/ecommerce-data)
+[E-Commerce Data (UCI Online Retail)](https://www.kaggle.com/datasets/carrie1/ecommerce-data)
 
 | Property | Value |
-|---|---|
-| Granularity | One row per transaction line |
-| Raw rows | 541,909 transactions |
+|----------|-------|
+| Rows | ~540k transaction lines |
 | Customers (after cleaning) | 4,338 |
-| Raw columns | `InvoiceNo`, `StockCode`, `Description`, `Quantity`, `InvoiceDate`, `UnitPrice`, `CustomerID`, `Country` |
-
-The raw CSV (~40 MB) is **not committed**; it is fetched on demand via the Kaggle API.
-
----
+| Fields | invoice, stock code, quantity, unit price, invoice date, customer id, country |
+| Target | none (unsupervised) |
 
 ## Solution Strategy
 
-- **Data acquisition** — download via Kaggle API into `data/raw/` (idempotent; skipped if present).
-- **Cleaning** — drop missing customers, parse dates, keep positive quantity/price, remove cancelled invoices (`InvoiceNo` prefixed `C`).
-- **Feature engineering** — aggregate transactions into one RFM row per customer.
-- **Preprocessing pipeline** (sklearn `ColumnTransformer`): `SimpleImputer(median) → log1p → StandardScaler`. `log1p` compresses the right-skewed RFM tails before distance-based clustering.
-- **Data leakage** — structurally not applicable (unsupervised, no target). The only temporal dependency, `recency_days`, is computed against a snapshot reference date (`max(InvoiceDate) + 1 day`); production scoring must recompute RFM as-of the scoring date.
-- **Baseline → model** — rule-based RFM scoring, then K-Means with a grid search over `k`.
-- **Validation** — stability via bootstrap resampling (Adjusted Rand Index), themclustering analogue of cross-validation.
-- **Evaluation** — internal indices + per-segment profiling + boundary (error) analysis.
-- **Serving** — serialize the full pipeline (`models/pipeline.joblib`) and expose an on-demand Streamlit app. The transform is bundled with the model — no training-serving skew.
-
----
+1. **Acquisition** — pull the dataset from Kaggle on demand; a versioned scored sample backs an offline run.
+2. **Cleaning** — drop cancellations and non-positive quantities/prices, require a customer id.
+3. **RFM engineering** — aggregate transactions to one row per customer: recency, frequency, monetary, average ticket and total items.
+4. **Preparation** — log-transform the skewed RFM features and standardize, inside the model `Pipeline` so serving reuses the exact transform.
+5. **Model selection** — KMeans is fit across a range of k and the number of segments is chosen on clustering quality, then segments are ranked and named by value.
+6. **Activation** — the top segment is profiled as the Insiders tier with its revenue contribution quantified.
 
 ## Top Insights & Hypotheses
 
-- **Revenue is highly concentrated.** The top segment (16.5% of customers) generates
-  **64.5% of revenue** — a 3.9× concentration. This is the core justification for Insiders.
-- **Insiders are structurally different**, not just bigger spenders: they order ~14× per year (vs 1.3× for the dormant majority) with 17-day recency (vs 160 days).
-- **A high-ticket, low-frequency niche exists** (the *Promising* segment: £671 average ticket, ~2 orders, 124-day recency) that behaves like wholesale buyers. It is the least cohesive group (27% boundary share) and warrants separate treatment.
-- **~39% of customers are dormant/at-risk** (160-day recency) yet contribute only 5.6% of revenue — low priority for premium perks, candidates for win-back instead.
-
----
+- **A small tier drives most revenue.** The Insiders segment is 16% of customers but **64% of revenue** — a textbook case for a dedicated program.
+- **Revenue concentration is steep.** Insiders spend on average 3.9x the overall customer mean.
+- **Recency separates value sharply** — Insiders ordered ~17 days ago on average versus ~160 days for the At-Risk tier.
+- **The largest segments are the least valuable** (Loyal Customers 37% / 21% of revenue, At-Risk 39% / 6%), so headcount is a poor proxy for value.
 
 ## Engineered Features
 
-All features are domain aggregations from raw transactions (the *engineered* layer);
-the `log1p` + scaling parameters and centroids are *learned* inside the pipeline.
-
-| Feature | Formula | Business signal |
-|---|---|---|
-| `recency_days` | `(max(InvoiceDate)+1d − last purchase).days` | Engagement freshness; high = churn risk |
-| `frequency` | count of distinct invoices | Purchase habit / loyalty |
-| `monetary` | Σ(`Quantity` × `UnitPrice`) | Total revenue contribution |
-| `avg_ticket` | mean(`Quantity` × `UnitPrice`) per line | Basket value / price tier |
-| `total_items` | Σ `Quantity` | Volume of consumption |
-
----
+| Feature | Definition | Business signal |
+|---------|-----------|-----------------|
+| recency_days | days since the customer's last purchase | engagement freshness |
+| frequency | number of distinct invoices | purchase cadence |
+| monetary | total gross revenue from the customer | direct value |
+| avg_ticket | mean revenue per invoice | basket size |
+| total_items | total quantity purchased | volume |
 
 ## Model
 
-**Baseline vs. final model**
+KMeans on log-transformed, standardized RFM features, with k chosen by clustering quality and the
+full preprocessing-plus-KMeans pipeline serialized for skew-free serving.
 
-| Approach | Method | Top-segment size | Top-segment revenue | Silhouette |
-|---|---|---|---|---|
-| Baseline | RFM quintile scoring (heuristic) | 21.4% | 70.1% | 0.091 |
-| **Final** | **K-Means (k=4), log-scaled RFM** | **16.5% (Insiders)** | **64.5%** | **0.269** |
-
-The heuristic captures slightly more raw revenue, but in a looser, larger bucket.
-K-Means trades a little revenue coverage for **3× better cohesion** and a sharper
-Insiders definition.
-
-**Model selection** — grid search over `k`, scored by three internal indices:
-
-| k | Silhouette ↑ | Davies-Bouldin ↓ | Calinski-Harabasz ↑ |
-|---|---|---|---|
-| 3 | 0.256 | 1.295 | 2200.7 |
-| **4** | **0.269** | **1.173** | 1912.3 |
-| 5 | 0.231 | 1.286 | 1729.3 |
-| 6 | 0.216 | 1.266 | 1562.0 |
-| 7 | 0.200 | 1.316 | 1442.3 |
-| 8 | 0.207 | 1.254 | 1461.0 |
-| 9 | 0.200 | 1.271 | 1376.4 |
-
-`k=4` wins on silhouette **and** Davies-Bouldin. (Calinski-Harabasz prefers fewer
-clusters monotonically, so it is used as a tie-checker, not the selector.)
-
-**Final metrics**
-
-| Metric | Value | Reading |
-|---|---|---|
-| Silhouette | 0.269 | Moderate but real separation — expected for continuous behavioural data |
-| Davies-Bouldin | 1.173 | Lower is better |
-| Stability (mean ARI) | 0.678 ± 0.196 | Assignments are reasonably reproducible across resamples |
-| Boundary share | 3.25% | Few customers sit ambiguously between segments |
-
----
+| Metric | Value |
+|--------|------:|
+| Selected k | 4 |
+| Silhouette | 0.269 |
+| Davies-Bouldin | 1.173 |
+| Calinski-Harabasz | 1912 |
 
 ## Business Results
 
-| Cluster | Segment | Customers | % Customers | % Revenue | Recency (d) | Frequency | Avg Monetary (£) |
-|---|---|---|---|---|---|---|---|
-| 0 | **Insiders** | 714 | 16.5% | **64.5%** | 17 | 13.8 | 8,046 |
-| 2 | Loyal Customers | 1,607 | 37.0% | 21.3% | 50 | 3.6 | 1,180 |
-| 1 | Promising | 316 | 7.3% | 8.7% | 125 | 2.2 | 2,454 |
-| 3 | At Risk | 1,701 | 39.2% | 5.6% | 160 | 1.3 | 291 |
+| Segment | Customers % | Revenue % | Avg recency (days) | Avg frequency | Avg monetary |
+|---------|------------:|----------:|-------------------:|--------------:|-------------:|
+| Insiders | 16.5% | 64.5% | 17 | 13.8 | 8,046 |
+| Loyal Customers | 37.0% | 21.3% | 50 | 3.6 | 1,180 |
+| Promising | 7.3% | 8.7% | 125 | 2.2 | 2,454 |
+| At Risk | 39.2% | 5.6% | 160 | 1.3 | 291 |
 
-**ML → business translation:** targeting the **714 Insiders** (16.5% of the base) covers **£5.74M / 64.5%** of revenue at a **3.9× concentration lift**. A retention campaign focused on this segment protects the majority of revenue while spending perk budget on the smallest possible audience — the explicit cost trade-off from the Business Problem.
-
----
+The Insiders tier — 714 customers generating **$5.7M, 64% of revenue at 3.9x the average customer
+value** — is the program's clear focus, while At-Risk customers are a separate win-back problem.
 
 ## How to Run
 
-```bash
-# 1. Clone
-git clone https://github.com/pmusachio/insiders-loyalty-program.git
-cd insiders-loyalty-program
-
-# 2. Environment
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-# 3. Kaggle credentials
-#    Place your kaggle.json at ~/.kaggle/kaggle.json (Kaggle → Settings → API).
-
-# 4. Run the full pipeline (download → preprocess → baseline → train → evaluate → serialize)
-python -m src.pipeline
-
-# 5. Tests
-pytest tests/
-
-# 6. App (local)
-streamlit run app/streamlit_app.py
-```
-
-**Live demo:** [huggingface.co/spaces/pmusachio/insiders-loyalty-program](https://huggingface.co/spaces/pmusachio/insiders-loyalty-program)
-
----
+1. **Clone**
+   ```
+   git clone https://github.com/pmusachio/insiders-loyalty-program.git
+   cd insiders-loyalty-program
+   ```
+2. **Environment**
+   ```
+   python -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. **Kaggle access** — place a Kaggle API token at `~/.kaggle/`; the pipeline falls back to the versioned sample if none is present.
+4. **Run the pipeline**
+   ```
+   python -m src.pipeline
+   ```
+5. **Tests**
+   ```
+   pytest tests/
+   ```
+6. **App (local)**
+   ```
+   streamlit run app/streamlit_app.py
+   ```
+7. **Live app** — [huggingface.co/spaces/pmusachio/insiders-loyalty-program](https://huggingface.co/spaces/pmusachio/insiders-loyalty-program) — profile a customer and see their loyalty segment.
 
 ## Next Steps
 
-- **Drift & performance monitoring.** Track the RFM feature distributions and segment
-  sizes monthly; alert when the population shifts (e.g., PSI on each feature) or when
-  the Insiders share drifts materially from ~16%.
-- **Retraining triggers.** Refit when stability (ARI) on a fresh snapshot degrades, when
-  silhouette drops below ~0.22, or on a fixed monthly cadence — whichever comes first.
-- **Known limitations (conscious trade-offs):**
-  - Silhouette ≈ 0.27 reflects genuinely continuous behaviour; segments are useful but
-    not crisply separated. A soft-assignment model (e.g., Gaussian Mixture) is a
-    candidate if probabilistic membership becomes a requirement.
-  - RFM features are correlated (`monetary`, `avg_ticket`, `total_items`); K-Means on
-    Euclidean distance tolerates this, but a dimensionality step is a future option.
-  - `recency` is snapshot-relative; a rolling reference date is needed for live scoring.
-  - **No Git LFS / feature store / model registry** — deliberately omitted. No artifact
-    exceeds 50 MB and the model is a 37 KB joblib; that infrastructure would be
-    disproportionate to the project's scale.
+- Validate the tiers against forward revenue: the real test is whether Insiders-targeted perks lift retention and spend versus a control.
+- Add product-category and tenure features to split the large low-value segments into actionable win-back groups.
+- Re-score on a schedule, since RFM position drifts as customers buy or lapse.

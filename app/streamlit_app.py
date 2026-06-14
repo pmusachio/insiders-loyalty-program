@@ -1,33 +1,36 @@
-"""Streamlit app for the Insiders loyalty segmentation model.
+"""Interactive RFM customer-segmentation dashboard.
 
-Two views, both served from the serialized pipeline (never retrains) and the small
-scored base in ``data/sample/`` (never reads ``raw/`` or ``processed/``):
-  * Customer base — the full scored population, segment-coloured, downloadable.
-  * Classify a customer — on-demand, synchronous single-customer scoring.
+Scores a customer's recency/frequency/monetary profile into a value-ranked loyalty
+segment and shows where they fall on the customer map, with the segment overview.
 """
-
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src import config  # noqa: E402
 from src.predict import Predictor, RFMInput  # noqa: E402
 
-st.set_page_config(page_title="Insiders Loyalty Segmentation", page_icon="🎯", layout="wide")
-
-# RdYlGn ramp ordered best (green) -> worst (red); indexed by value rank.
-_RAMP = [
-    "#006837", "#1a9850", "#66bd63", "#a6d96a", "#d9ef8b", "#ffffbf",
-    "#fee08b", "#fdae61", "#f46d43", "#d73027", "#a50026",
-]
+D = config.DRACULA
+st.set_page_config(page_title="Insiders Loyalty Segmentation", layout="wide")
+st.markdown(
+    f"""<style>
+    .stApp {{ background-color: {D['background']}; color: {D['foreground']}; }}
+    section[data-testid="stSidebar"] {{ background-color: {D['current_line']}; }}
+    h1, h2, h3 {{ color: {D['purple']}; }}
+    </style>""",
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_resource
@@ -36,207 +39,93 @@ def load_predictor() -> Predictor:
 
 
 @st.cache_data
-def load_base() -> pd.DataFrame:
-    return pd.read_parquet(config.SAMPLE_FILE)
+def load_sample() -> pd.DataFrame:
+    return pd.read_parquet(config.SAMPLE_FILE) if config.SAMPLE_FILE.exists() else pd.DataFrame()
 
 
 @st.cache_data
 def load_card() -> dict:
-    return json.loads(config.MODEL_CARD_PATH.read_text(encoding="utf-8"))
+    return json.loads(config.MODEL_CARD_PATH.read_text()) if config.MODEL_CARD_PATH.exists() else {}
 
 
-def _luminance(hex_color: str) -> float:
-    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
-    return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+def style_axes(ax):
+    ax.set_facecolor(D["background"])
+    for s in ax.spines.values():
+        s.set_color(D["current_line"])
+    ax.tick_params(colors=D["foreground"])
+    ax.xaxis.label.set_color(D["foreground"])
+    ax.yaxis.label.set_color(D["foreground"])
+    ax.grid(True, color=D["current_line"], linestyle="--", alpha=0.4)
 
 
-def _rank_color(rank: int, n: int) -> str:
-    idx = 0 if n <= 1 else round(rank / (n - 1) * (len(_RAMP) - 1))
-    return _RAMP[idx]
+def customer_map(df, point, point_segment, names):
+    fig, ax = plt.subplots(figsize=(6, 3.8), facecolor=D["background"])
+    segs = list(names.values()) if names else sorted(df["segment"].unique())
+    for i, seg in enumerate(segs):
+        m = df["segment"] == seg
+        ax.scatter(df.loc[m, "frequency"], np.log1p(df.loc[m, "monetary"]), s=9, alpha=0.5,
+                   color=config.SEGMENT_COLORS[i % len(config.SEGMENT_COLORS)], label=seg)
+    ax.scatter([point[0]], [np.log1p(point[1])], s=240, marker="*", color=D["foreground"],
+               edgecolors=D["purple"], linewidths=2, zorder=5, label="This customer")
+    ax.set_xlabel("Frequency (orders)")
+    ax.set_ylabel("Monetary (log)")
+    ax.legend(facecolor=D["current_line"], edgecolor=D["comment"], labelcolor=D["foreground"], fontsize=7)
+    style_axes(ax)
+    fig.tight_layout()
+    return fig
 
 
-def _white_to_green(p: float) -> str:
-    r, g, b = (int(255 + (target - 255) * p) for target in (26, 152, 80))
-    return f"#{r:02x}{g:02x}{b:02x}"
+def main():
+    try:
+        predictor = load_predictor()
+    except FileNotFoundError:
+        st.error("Model artifact not found. Run the pipeline before launching the app.")
+        return
 
-
-try:
-    predictor = load_predictor()
-    base = load_base()
     card = load_card()
-except FileNotFoundError:
-    st.error("Trained model not found. Run `python -m src.pipeline` to generate the pipeline first.")
-    st.stop()
+    sample = load_sample()
+    names = {int(k): v for k, v in card.get("segment_names", {}).items()}
 
-segment_names = {int(k): v for k, v in card["segment_names"].items()}
-name_to_rank = {v: int(k) for k, v in card["segment_names"].items()}
-n_segments = len(segment_names)
-business = card.get("business", {})
-
-st.title("🎯 Insiders Loyalty Segmentation")
-st.caption("RFM + K-Means segmentation of an e-commerce customer base. Model loaded from a serialized pipeline.")
-st.info(
-    f"**Insiders** are {business.get('insiders_pct_customers', 0)}% of customers but hold "
-    f"{business.get('insiders_pct_revenue', 0)}% of revenue "
-    f"({business.get('insiders_revenue_lift', 0)}× revenue concentration)."
-)
-
-base_tab, predict_tab = st.tabs(["📊 Customer base", "🎯 Classify a customer"])
-
-# --------------------------------------------------------------------------- #
-# Tab 1 — segmented customer base
-# --------------------------------------------------------------------------- #
-with base_tab:
-    total_revenue = float(base["monetary"].sum())
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Customers", f"{len(base):,}")
-    c2.metric("Total revenue", f"£{total_revenue:,.0f}")
-    c3.metric("Insiders", f"{int(business.get('insiders_customers', 0)):,}")
-    c4.metric("Insiders revenue", f"{business.get('insiders_pct_revenue', 0)}%")
-
-    st.markdown("**Segments** (ranked by value)")
-    summary = pd.DataFrame(
-        [
-            {
-                "Segment": seg["name"],
-                "Customers": int(seg["n_customers"]),
-                "% Customers": seg["pct_customers"],
-                "% Revenue": seg["pct_revenue"],
-                "Avg Monetary (£)": seg["monetary"],
-            }
-            for _, seg in sorted(card["segments"].items(), key=lambda kv: int(kv[0]))
-        ]
+    st.title("Insiders Loyalty Program — RFM Segmentation")
+    st.markdown(
+        "Scores a customer's purchase behaviour into a value-ranked loyalty segment to target the "
+        "loyalty program where it pays off most. Built with RFM features and KMeans."
     )
 
-    def _color_segment(col: pd.Series) -> list[str]:
-        styles = []
-        for value in col:
-            bg = _rank_color(name_to_rank.get(value, n_segments - 1), n_segments)
-            fg = "#000000" if _luminance(bg) > 0.6 else "#ffffff"
-            styles.append(f"background-color: {bg}; color: {fg}")
-        return styles
+    with st.sidebar:
+        st.header("Customer (RFM)")
+        recency = st.slider("Recency (days since last order)", 0, 380, 30)
+        frequency = st.slider("Frequency (orders)", 1, 100, 8)
+        monetary = st.number_input("Monetary (total spend)", 0.0, 100000.0, 4000.0, 100.0)
+        avg_ticket = st.number_input("Average ticket", 0.0, 5000.0, 50.0, 5.0)
+        total_items = st.number_input("Total items", 0.0, 100000.0, 1500.0, 50.0)
+        run = st.button("Assign segment", type="primary")
 
-    st.dataframe(
-        summary.style.apply(_color_segment, subset=["Segment"]).format(
-            {"% Customers": "{:.1f}", "% Revenue": "{:.1f}", "Avg Monetary (£)": "{:,.0f}", "Customers": "{:,}"}
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
+    if run:
+        pred = predictor.predict(RFMInput(recency, frequency, monetary, avg_ticket, total_items))
+        st.subheader("Assigned segment")
+        c = st.columns(3)
+        c[0].metric("Segment", pred.segment)
+        c[1].metric("Insider", "Yes" if pred.is_insider else "No")
+        c[2].metric("Confidence", f"{pred.confidence*100:.0f}%")
+        color = D["green"] if pred.is_insider else D["foreground"]
+        st.markdown(
+            f"<span style='color:{color}'>This customer is assigned to the "
+            f"<b>{pred.segment}</b> segment.</span>", unsafe_allow_html=True)
+        if not sample.empty:
+            st.pyplot(customer_map(sample, (frequency, monetary), pred.cluster_id, names))
 
-    st.markdown("**Customers** — coloured by segment value, graded by revenue")
-    options = ["All segments"] + [segment_names[r] for r in sorted(segment_names)]
-    choice = st.selectbox("Filter", options, index=0)
+    if card.get("segments"):
+        st.subheader("Segments overview")
+        rows = []
+        for k, s in sorted(card["segments"].items(), key=lambda kv: int(kv[0])):
+            rows.append({"Segment": s["name"], "Customers %": round(s["pct_customers"], 1),
+                         "Revenue %": round(s["pct_revenue"], 1),
+                         "Avg recency (d)": round(s["recency_days"], 0),
+                         "Avg frequency": round(s["frequency"], 1),
+                         "Avg monetary": round(s["monetary"], 0)})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
-    view = base if choice == "All segments" else base[base["segment"] == choice]
-    display = (
-        view.sort_values("monetary", ascending=False)
-        .loc[:, ["customer_id", "recency_days", "frequency", "monetary", "avg_ticket", "total_items", "segment"]]
-        .rename(
-            columns={
-                "customer_id": "Customer",
-                "recency_days": "Recency (d)",
-                "frequency": "Frequency",
-                "monetary": "Monetary (£)",
-                "avg_ticket": "Avg Ticket (£)",
-                "total_items": "Items",
-                "segment": "Segment",
-            }
-        )
-    )
 
-    def _grade_monetary(col: pd.Series) -> list[str]:
-        pct = col.rank(pct=True)
-        return [f"background-color: {_white_to_green(p)}" for p in pct]
-
-    st.dataframe(
-        display.style.apply(_color_segment, subset=["Segment"])
-        .apply(_grade_monetary, subset=["Monetary (£)"])
-        .format(
-            {
-                "Customer": "{:.0f}",
-                "Recency (d)": "{:.0f}",
-                "Frequency": "{:.0f}",
-                "Monetary (£)": "{:,.0f}",
-                "Avg Ticket (£)": "{:,.2f}",
-                "Items": "{:,.0f}",
-            }
-        ),
-        use_container_width=True,
-        height=460,
-        hide_index=True,
-    )
-    st.download_button(
-        "⬇️ Download segmented list (CSV)",
-        data=view.to_csv(index=False).encode("utf-8"),
-        file_name="insiders_customer_segments.csv",
-        mime="text/csv",
-    )
-
-# --------------------------------------------------------------------------- #
-# Tab 2 — single-customer scoring
-# --------------------------------------------------------------------------- #
-with predict_tab:
-
-    def _number_input(label: str, series: pd.Series, *, integer: bool) -> float:
-        median = float(series.median())
-        hi = float(series.quantile(0.99)) * 2
-        if integer:
-            return float(st.number_input(label, min_value=0, max_value=int(hi) or 1, value=int(median), step=1))
-        return float(st.number_input(label, min_value=0.0, max_value=round(hi, 2), value=round(median, 2), step=10.0))
-
-    st.markdown("Enter a customer's RFM profile to assign a segment on demand.")
-    left, right = st.columns(2)
-    with left:
-        recency = _number_input("Recency (days since last purchase)", base["recency_days"], integer=True)
-        frequency = _number_input("Frequency (number of orders)", base["frequency"], integer=True)
-        monetary = _number_input("Monetary (total spend)", base["monetary"], integer=False)
-    with right:
-        avg_ticket = _number_input("Average ticket (spend per line)", base["avg_ticket"], integer=False)
-        total_items = _number_input("Total items purchased", base["total_items"], integer=True)
-
-    if st.button("Classify customer", type="primary"):
-        try:
-            result = predictor.predict(
-                RFMInput(
-                    recency_days=recency,
-                    frequency=frequency,
-                    monetary=monetary,
-                    avg_ticket=avg_ticket,
-                    total_items=total_items,
-                )
-            )
-        except ValueError as exc:
-            st.error(f"Invalid input: {exc}")
-            st.stop()
-
-        badge = "⭐ Insider" if result.is_insider else "Standard segment"
-        m1, m2 = st.columns(2)
-        m1.metric("Segment", result.segment)
-        m2.metric("Assignment confidence", f"{result.confidence * 100:.1f}%")
-        st.success(f"This customer is classified as **{result.segment}** — {badge}.")
-
-        segment_stats = card.get("segments", {}).get(str(result.cluster_id), {})
-        if segment_stats:
-            st.markdown("**Segment profile vs. this customer**")
-            st.dataframe(
-                pd.DataFrame(
-                    {
-                        "This customer": [recency, frequency, monetary, avg_ticket, total_items],
-                        "Segment average": [segment_stats.get(f, float("nan")) for f in config.RFM_FEATURES],
-                    },
-                    index=config.RFM_FEATURES,
-                ).round(2),
-                use_container_width=True,
-            )
-
-        st.markdown("**What defines this segment** (standardized distance from the average customer)")
-        st.bar_chart(
-            pd.DataFrame(
-                {"segment profile (z)": [fc.segment_zscore for fc in result.feature_contributions]},
-                index=[fc.feature for fc in result.feature_contributions],
-            )
-        )
-        top = result.feature_contributions[0]
-        direction = "above" if top.segment_zscore > 0 else "below"
-        st.caption(f"Most distinctive trait: **{top.feature}** is well {direction} average for this segment.")
+if __name__ == "__main__":
+    main()
